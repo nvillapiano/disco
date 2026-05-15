@@ -1,0 +1,27 @@
+# Swift Package Manager
+.build/
+*.resolved
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.pbxproj
+
+# Build artifacts
+Disco.app/
+Disco.dmg
+.dmg_staging/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor
+.vscode/
+.cursor/
+*.swp
+*.swo
