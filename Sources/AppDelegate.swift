@@ -330,37 +330,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Returns the screen position of the insertion caret in the currently focused
     /// text field, using the macOS Accessibility API.
     ///
-    /// The API chain:
-    ///   1. Get the system-wide focused UI element (kAXFocusedUIElementAttribute)
-    ///   2. Get its selected text range (kAXSelectedTextRangeAttribute)
-    ///   3. Get the bounding rect for that range (kAXBoundsForRangeParameterizedAttribute)
+    /// Tries three approaches in order:
+    ///   1. Exact caret bounds via kAXBoundsForRangeParameterizedAttribute
+    ///   2. Focused element frame (text field bounds) — works in apps that don't
+    ///      expose per-character caret bounds (Chrome, Electron, VSCode, etc.)
+    ///   3. Current mouse location as a last resort
     ///
-    /// The resulting rect uses top-left origin (screen coordinates), which is converted
-    /// to NSPoint bottom-left origin for NSWindow positioning. Falls back to the
-    /// current mouse location if any step in the chain fails (e.g. the focused app
-    /// doesn't expose caret bounds — common in browsers and Electron apps).
+    /// All Accessibility rects use top-left origin (CG screen coordinates), which
+    /// is converted to NSPoint bottom-left origin for NSWindow positioning.
     private func caretScreenPosition() -> NSPoint {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedEl: CFTypeRef?
         AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedEl)
-        guard let focused = focusedEl else { return NSEvent.mouseLocation }
+        guard let focused = focusedEl, let el = focused as? AXUIElement else {
+            return NSEvent.mouseLocation
+        }
 
-        let el = focused as! AXUIElement
-        var selVal: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute as CFString, &selVal) == .success,
-              let sel = selVal else { return NSEvent.mouseLocation }
-
-        var boundsVal: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(
-            el, kAXBoundsForRangeParameterizedAttribute as CFString, sel, &boundsVal
-        ) == .success, let bv = boundsVal else { return NSEvent.mouseLocation }
-
-        var rect = CGRect.zero
-        AXValueGetValue(bv as! AXValue, AXValueType(rawValue: kAXValueCGRectType)!, &rect)
-
-        // Convert from Accessibility (top-left origin) to NSPoint (bottom-left origin).
         let screenH = NSScreen.screens.first?.frame.height ?? 800
-        return NSPoint(x: rect.minX, y: screenH - rect.maxY)
+
+        // 1. Precise caret position via the selected text range bounds.
+        var selVal: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute as CFString, &selVal) == .success,
+           let sel = selVal {
+            var boundsVal: CFTypeRef?
+            if AXUIElementCopyParameterizedAttributeValue(
+                el, kAXBoundsForRangeParameterizedAttribute as CFString, sel, &boundsVal
+            ) == .success, let bv = boundsVal, let axVal = bv as? AXValue {
+                var rect = CGRect.zero
+                if AXValueGetValue(axVal, .cgRect, &rect), rect.maxY > 0 {
+                    return NSPoint(x: rect.minX, y: screenH - rect.maxY)
+                }
+            }
+        }
+
+        // 2. Fallback: use the focused element's own frame so the popup at least
+        //    appears near the active text field instead of wherever the mouse is.
+        var posVal: CFTypeRef?
+        var sizeVal: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posVal) == .success,
+           AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeVal) == .success,
+           let pv = posVal as? AXValue, let sv = sizeVal as? AXValue {
+            var pos  = CGPoint.zero
+            var size = CGSize.zero
+            if AXValueGetValue(pv, .cgPoint, &pos), AXValueGetValue(sv, .cgSize, &size), size.height > 0 {
+                // Anchor to the bottom-left of the focused element in AppKit coords.
+                return NSPoint(x: pos.x, y: screenH - (pos.y + size.height))
+            }
+        }
+
+        return NSEvent.mouseLocation
     }
 
     // MARK: - Menu Actions
