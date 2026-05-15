@@ -1,0 +1,27 @@
+{
+  "name": "disco",
+  "version": "1.1.0",
+  "description": "Slack-style system-wide emoji autocomplete for macOS. Type : in any app to get started.",
+  "author": "Nick Villapiano <nvillapiano@gmail.com>",
+  "license": "MIT",
+  "private": true,
+  "os": ["darwin"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "bash build.sh"
+  },
+  "keywords": [
+    "macos",
+    "emoji",
+    "autocomplete",
+    "menu-bar",
+    "swift",
+    "appkit"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nvillapiano/disco.git"
+  }
+}
