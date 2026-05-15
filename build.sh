@@ -38,7 +38,20 @@ chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
 echo "✅  ${APP_BUNDLE} assembled."
 
-# ── 3. Remove quarantine flag (avoids Gatekeeper on first run for unsigned apps)
+# ── 3. Sign + strip quarantine ───────────────────────────────────────────────
+# "Disco Dev" is a self-signed code-signing cert created once in Keychain Access.
+# A stable certificate identity lets TCC (Accessibility permissions) survive
+# reinstalls — without it, macOS revokes the grant every time the binary changes.
+SIGN_IDENTITY="Disco Dev"
+if security find-certificate -c "${SIGN_IDENTITY}" &>/dev/null; then
+    codesign --force --deep --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}" 2>&1 \
+      && echo "✍️   Signed with '${SIGN_IDENTITY}'" \
+      || echo "⚠️   Signing failed — Accessibility permission may reset on reinstall"
+else
+    echo "⚠️   '${SIGN_IDENTITY}' cert not found — run: Keychain Access → Certificate Assistant → Create a Certificate (Code Signing)"
+    codesign --force --deep --sign - "${APP_BUNDLE}" 2>/dev/null || true
+fi
+
 xattr -cr "${APP_BUNDLE}" 2>/dev/null || true
 
 # ── 4. Build DMG ────────────────────────────────────────────────────────────
@@ -51,12 +64,16 @@ cp -R   "${APP_BUNDLE}" "${STAGING_DIR}/"
 # Symlink to /Applications so the user can drag-install
 ln -s /Applications "${STAGING_DIR}/Applications"
 
-hdiutil create \
+if hdiutil create \
     -volname "${APP_NAME}" \
     -srcfolder "${STAGING_DIR}" \
     -ov \
     -format UDZO \
-    "${DMG_NAME}"
+    "${DMG_NAME}" 2>/dev/null; then
+  echo "created: $(pwd)/${DMG_NAME}"
+else
+  echo "⚠️   DMG creation failed (skipping — .app is still valid)"
+fi
 
 rm -rf "${STAGING_DIR}"
 

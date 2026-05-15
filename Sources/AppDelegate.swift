@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var tapActive = false
 
     /// Lazily created on first use; persists for the app lifetime.
     private var autocompleteController: AutocompleteWindowController?
@@ -54,11 +55,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu Bar
 
+    /// Creates the NSStatusItem once. Safe to call multiple times — subsequent
+    /// calls only refresh the menu content, they never recreate the status item.
     private func setupMenuBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.title = "🪩"
-        statusItem.button?.font = NSFont.systemFont(ofSize: 14)
-        statusItem.button?.toolTip = "Disco"
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            statusItem.button?.title   = "🪩"
+            statusItem.button?.toolTip = "Disco"
+        }
+        attachMenu()
+    }
+
+    /// Rebuilds and re-attaches the dropdown menu without touching the status item itself.
+    /// Call this whenever the menu content needs refreshing (tap state change, popover close).
+    private func attachMenu() {
+        let axLine  = NSMenuItem(title: axStatusTitle(),  action: nil, keyEquivalent: ""); axLine.isEnabled  = false
+        let tapLine = NSMenuItem(title: tapStatusTitle(), action: nil, keyEquivalent: ""); tapLine.isEnabled = false
 
         let browse   = NSMenuItem(title: "Browse Emoji…", action: #selector(openBrowser),  keyEquivalent: "");  browse.target  = self
         let settings = NSMenuItem(title: "Settings…",     action: #selector(openSettings), keyEquivalent: ","); settings.target = self
@@ -67,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let quit     = NSMenuItem(title: "Quit Disco",    action: #selector(NSApp.terminate(_:)), keyEquivalent: "q")
 
         let menu = NSMenu()
+        menu.addItem(axLine)
+        menu.addItem(tapLine)
+        menu.addItem(.separator())
         menu.addItem(browse)
         menu.addItem(settings)
         menu.addItem(.separator())
@@ -135,6 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        tapActive = true
+        attachMenu()   // refresh status line — do NOT recreate the status item
     }
 
     private func stopEventTap() {
@@ -342,9 +359,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedEl: CFTypeRef?
         AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedEl)
-        guard let focused = focusedEl, let el = focused as? AXUIElement else {
-            return NSEvent.mouseLocation
-        }
+        guard let focused = focusedEl else { return NSEvent.mouseLocation }
+        let el = focused as! AXUIElement
 
         let screenH = NSScreen.screens.first?.frame.height ?? 800
 
@@ -355,30 +371,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var boundsVal: CFTypeRef?
             if AXUIElementCopyParameterizedAttributeValue(
                 el, kAXBoundsForRangeParameterizedAttribute as CFString, sel, &boundsVal
-            ) == .success, let bv = boundsVal, let axVal = bv as? AXValue {
+            ) == .success, let bv = boundsVal {
                 var rect = CGRect.zero
-                if AXValueGetValue(axVal, .cgRect, &rect), rect.maxY > 0 {
+                // Require a plausible line-height rect (> 2pt tall) that sits
+                // within the screen. Apps that mis-implement this attribute often
+                // return a zero-size rect at CG origin (0, screenH), which
+                // converts to AppKit (0, 0) and anchors the popup to the bottom-left.
+                if AXValueGetValue(bv as! AXValue, .cgRect, &rect),
+                   rect.height > 2,
+                   rect.maxY > 0,
+                   rect.maxY < screenH {
                     return NSPoint(x: rect.minX, y: screenH - rect.maxY)
                 }
             }
         }
 
-        // 2. Fallback: use the focused element's own frame so the popup at least
-        //    appears near the active text field instead of wherever the mouse is.
+        // 2. Fallback: use the focused element's frame.
+        //    Height guard: skip elements taller than 120pt — those are container
+        //    views (browser viewports, scroll areas), not text inputs.
+        //    X position: prefer mouse x if it sits inside the field, otherwise
+        //    use the horizontal centre so we don't anchor to the element's left edge.
         var posVal: CFTypeRef?
         var sizeVal: CFTypeRef?
         if AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posVal) == .success,
            AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeVal) == .success,
-           let pv = posVal as? AXValue, let sv = sizeVal as? AXValue {
+           let pv = posVal, let sv = sizeVal {
             var pos  = CGPoint.zero
             var size = CGSize.zero
-            if AXValueGetValue(pv, .cgPoint, &pos), AXValueGetValue(sv, .cgSize, &size), size.height > 0 {
-                // Anchor to the bottom-left of the focused element in AppKit coords.
-                return NSPoint(x: pos.x, y: screenH - (pos.y + size.height))
+            if AXValueGetValue(pv as! AXValue, .cgPoint, &pos),
+               AXValueGetValue(sv as! AXValue, .cgSize, &size),
+               size.height > 0, size.height < 120 {
+                let fieldMinX = pos.x
+                let fieldMaxX = pos.x + size.width
+                let mouseX    = NSEvent.mouseLocation.x
+                let anchorX   = (mouseX >= fieldMinX && mouseX <= fieldMaxX)
+                                ? mouseX
+                                : (fieldMinX + fieldMaxX) / 2
+                return NSPoint(x: anchorX, y: screenH - (pos.y + size.height))
             }
         }
 
         return NSEvent.mouseLocation
+    }
+
+    private func axStatusTitle() -> String {
+        AXIsProcessTrusted()
+            ? "✅ Accessibility granted"
+            : "⚠️ Accessibility needed — check System Settings"
+    }
+
+    private func tapStatusTitle() -> String {
+        tapActive
+            ? "✅ Listening for \(DiscoPreferences.shared.triggerCharacter)"
+            : "⚠️ Event tap inactive"
     }
 
     // MARK: - Menu Actions
@@ -440,7 +485,7 @@ extension AppDelegate: NSPopoverDelegate {
     /// If we re-attach it too early (e.g. on popoverWillClose) the animation
     /// glitches; waiting for didClose is the safe approach.
     func popoverDidClose(_ notification: Notification) {
-        setupMenuBar()
+        attachMenu()   // re-attach menu without recreating status item
     }
 }
 
