@@ -13,7 +13,8 @@
     "build": "bash build.sh",
     "migrate": "bash install.sh",
     "build:full": "npm run build && npm run migrate",
-    "release": "git tag v$(node -p \"require('./package.json').version\") && git push origin v$(node -p \"require('./package.json').version\")"
+    "release": "git push origin main && git tag v$(node -p \"require('./package.json').version\") && git push origin v$(node -p \"require('./package.json').version\")",
+    "release:patch": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8')),v=p.version.split('.').map(Number);v[2]++;p.version=v.join('.');fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n');\" && SHORT=$(node -p \"require('./package.json').version.split('.').slice(0,2).join('.')\") && /usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString $SHORT\" Resources/Info.plist && git add package.json Resources/Info.plist && git commit -m \"chore: bump version to $(node -p \\\"require('./package.json').version\\\")\" && npm run release"
   },
   "keywords": [
     "macos",

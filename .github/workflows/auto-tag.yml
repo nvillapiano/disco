@@ -1,0 +1,74 @@
+name: Auto-tag on merge
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  tag:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip version-bump commits
+        id: guard
+        run: |
+          MSG=$(git log -1 --pretty=%s)
+          if echo "$MSG" | grep -qE "^chore: bump version"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine semver bump
+        if: steps.guard.outputs.skip == 'false'
+        id: bump
+        run: |
+          MSG=$(git log -1 --pretty=%B)
+          if echo "$MSG" | grep -qE "BREAKING[- ]CHANGE|^[a-z]+(\(.+\))?!:"; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif echo "$MSG" | grep -qE "^feat(\(.+\))?:"; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=none" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version, commit, and tag
+        if: steps.guard.outputs.skip == 'false' && steps.bump.outputs.type != 'none'
+        run: |
+          TYPE="${{ steps.bump.outputs.type }}"
+          CURRENT=$(node -p "require('./package.json').version")
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          if [ "$TYPE" = "major" ]; then
+            NEW="$((MAJOR + 1)).0.0"
+          else
+            NEW="${MAJOR}.$((MINOR + 1)).0"
+          fi
+
+          SHORT=$(echo "$NEW" | cut -d. -f1-2)
+          BUILD=$(git rev-list --count HEAD)
+
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.version = '$NEW';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $SHORT" Resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" Resources/Info.plist
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json Resources/Info.plist
+          git commit -m "chore: bump version to $NEW"
+          git tag "v$NEW"
+          git push origin main --follow-tags
