@@ -9,6 +9,17 @@ No Electron. No subscription. Pure Swift, pure AppKit, ~1MB.
 
 ---
 
+## Download
+
+**[→ Download the latest Disco.dmg](https://github.com/nvillapiano/disco/releases/latest)**
+
+1. Open the DMG and drag **Disco.app** to `/Applications`
+2. Launch Disco — right-click → **Open** on first run to bypass Gatekeeper
+3. Grant Accessibility when prompted: **System Settings → Privacy & Security → Accessibility**
+4. Type `:fire` in any app to get started
+
+---
+
 ## Features
 
 | | |
@@ -28,40 +39,57 @@ No Electron. No subscription. Pure Swift, pure AppKit, ~1MB.
 
 ## Requirements
 
-- **macOS 12 Ventura or later**
-- **Xcode Command Line Tools:** `xcode-select --install`
+- **macOS 12 Monterey or later**
+- **Xcode Command Line Tools** (build from source only): `xcode-select --install`
 
 ---
 
-## Build & Install
+## Build from Source
 
 ```bash
-git clone https://github.com/your-username/disco.git
+git clone https://github.com/nvillapiano/disco.git
 cd disco
-bash build.sh
+npm run build:full   # build + install to /Applications + relaunch
 ```
 
-This produces:
+Or step by step:
 
-| File | Use |
-|---|---|
-| `Disco.app` | Drag to `/Applications` to install locally |
-| `Disco.dmg` | Share with others — they open it and drag to their Applications |
+```bash
+npm run build     # compile → Disco.app + Disco.dmg
+npm run migrate   # quit running Disco, copy to /Applications, relaunch
+```
 
-### First launch (unsigned app)
+`build.sh` can also be run directly without npm:
 
-Because Disco isn't signed with an Apple Developer certificate, macOS will warn
-you the first time:
+```bash
+bash build.sh
+# then drag Disco.app to /Applications manually
+```
+
+### Code signing (keeps Accessibility permission across rebuilds)
+
+macOS revokes Accessibility permission whenever the app binary changes, unless
+the app is signed with a stable identity. Create a local self-signed cert once:
+
+1. Open **Keychain Access** → menu bar: **Keychain Access → Certificate Assistant → Create a Certificate…**
+2. Name: `Disco Dev` · Identity Type: **Self Signed Root** · Certificate Type: **Code Signing**
+3. Click **Create**
+
+The build script signs automatically with this cert on every build. Without it,
+you'll be prompted to re-grant Accessibility after each `npm run build:full`.
+
+### First launch (unsigned / locally built)
 
 1. **Right-click** `Disco.app` → **Open** → click **Open** in the dialog
-2. That's it — macOS remembers the choice and won't ask again
+2. macOS remembers the choice — you won't be asked again
 
 ### Accessibility permission
 
-Disco needs Accessibility access to monitor keystrokes system-wide. On first
-launch you'll be prompted automatically:
+Disco needs Accessibility access to monitor keystrokes system-wide:
 
 > System Settings → Privacy & Security → Accessibility → enable Disco
+
+The menu bar icon shows `⚠️ Accessibility needed` until this is granted.
 
 ---
 
@@ -95,7 +123,9 @@ Click 🪩 in the menu bar → **Settings…**
 
 ```
 Disco/
-├── build.sh                               # One-command build → .app + .dmg
+├── build.sh                               # Compile → .app + .dmg, code-sign with "Disco Dev" cert
+├── install.sh                             # Quit running Disco, copy to /Applications, relaunch
+├── package.json                           # npm scripts: build, migrate, build:full, release
 ├── Package.swift                          # Swift Package Manager manifest
 ├── Sources/
 │   ├── main.swift                         # Entry point — boots NSApplication
@@ -105,9 +135,12 @@ Disco/
 │   ├── AutocompleteWindowController.swift # Floating popup (NSPanel)
 │   ├── BrowserWindowController.swift      # Full emoji browser window
 │   └── SettingsViewController.swift       # Settings popover
-└── Resources/
-    ├── Info.plist                         # App bundle metadata
-    └── emoji.json                         # 745-entry emoji database
+├── Resources/
+│   ├── Info.plist                         # App bundle metadata
+│   └── emoji.json                         # 745-entry emoji database
+└── .github/
+    └── workflows/
+        └── release.yml                    # Build + publish DMG to GitHub Releases on v* tag push
 ```
 
 ---
@@ -126,11 +159,18 @@ and contains matching. Scores are weighted by recency-decayed usage so emoji
 you've used recently surface above ones you used heavily long ago. Formula:
 `decayedScore = count / sqrt(hoursSinceLastUse + 1)`.
 
-### Popup
-A borderless `NSPanel` at `.popUpMenu` level — above everything, non-activating
-(the host app retains focus). Positioned below the text caret using the
-Accessibility API (`kAXBoundsForRangeParameterizedAttribute`), falling back to
-mouse position if the app doesn't expose caret bounds.
+### Popup positioning
+The popup is positioned using a three-step fallback:
+
+1. **Exact caret bounds** via `kAXBoundsForRangeParameterizedAttribute` — works
+   in native AppKit apps (TextEdit, Notes, Mail, etc.). Degenerate rects returned
+   by apps that partially implement this API are rejected (zero height, or bottom
+   of screen).
+2. **Focused element frame** via `kAXPositionAttribute` / `kAXSizeAttribute` —
+   works in browsers and Electron apps. Elements taller than 120pt are skipped
+   (they're container views, not text inputs). X position uses the mouse cursor
+   if it's within the field, otherwise the field's horizontal centre.
+3. **Mouse cursor position** — universal fallback.
 
 ### Key event handling
 While the popup is open, navigation keys (↑↓←→), Enter, Tab, and Escape are
@@ -150,24 +190,33 @@ pasteboard is never disturbed.
 - **Add emoji** — edit `Resources/emoji.json` (schema: `emoji`, `description`,
   `aliases`, `tags`, `category`)
 - **Resize the popup grid** — edit `cellSize` and `cols` in `AutocompleteWindowController.swift`
-- **Change the bundle ID** — edit `BUNDLE_ID` in `build.sh` and
-  `CFBundleIdentifier` in `Resources/Info.plist`
+- **Change the bundle ID** — edit `CFBundleIdentifier` in `Resources/Info.plist`
 
 ---
 
-## Distributing (unsigned)
+## Releasing
 
-Share `Disco.dmg`. Recipients:
-1. Open the DMG
-2. Drag `Disco.app` to their Applications folder
-3. Right-click → Open the first time (bypasses Gatekeeper for unsigned apps)
-4. Grant Accessibility permission when prompted
+```bash
+# 1. Bump version in package.json
+# 2. Update CHANGELOG.md
+# 3. Commit and push
+git add -A && git commit -m "Release vX.Y.Z" && git push
+
+# 4. Tag and push — GitHub Actions builds and publishes the DMG automatically
+npm run release
+```
+
+The workflow (`.github/workflows/release.yml`) runs on `macos-latest`, builds
+`Disco.dmg`, and attaches it to a new GitHub Release.
 
 ---
 
-## Code Signing & Notarization (optional)
+## Code Signing & Notarization
 
-If you obtain an Apple Developer account ($99/yr):
+For distribution to others, Disco ships as an unsigned DMG. Recipients
+right-click → Open once to bypass Gatekeeper.
+
+If you obtain an Apple Developer account ($99/yr) you can fully notarize:
 
 ```bash
 # Sign

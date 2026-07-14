@@ -5,9 +5,47 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [1.1.0] — 2026-05-14
+## [1.1.0] — 2026-07-14
+
+### Added
+- **Pre-built DMG release via GitHub Actions.** Every `v*` tag push triggers a
+  macOS build on GitHub Actions and publishes a `Disco.dmg` to GitHub Releases.
+  Users can now download a ready-to-run build without installing Xcode.
+  See `.github/workflows/release.yml`.
+- **`npm run migrate`** — quits any running Disco instance, copies the newly
+  built `Disco.app` to `/Applications`, strips quarantine attributes, and
+  relaunches the app. Replaces the previous manual drag-and-drop step.
+- **`npm run build:full`** — single command that builds and installs: runs
+  `npm run build` then `npm run migrate`.
+- **`npm run release`** — creates and pushes the version tag from `package.json`,
+  triggering the GitHub Actions release workflow automatically.
+- **Status menu health display.** The menu bar menu now shows the live state of
+  both the Accessibility permission and the event tap:
+  `✅ Accessibility granted` / `⚠️ Accessibility needed` and
+  `✅ Listening for :` / `⚠️ Event tap inactive`. Status lines refresh when
+  the tap starts and when the menu opens.
 
 ### Fixed
+- **Popup no longer anchors to the bottom-left corner.** Two bugs combined to
+  produce the bottom-left regression: (1) some apps return a degenerate
+  `kAXBoundsForRangeParameterizedAttribute` rect with zero height and `maxY`
+  equal to the full screen height, which converts to `(0, 0)` in AppKit
+  coordinates. These rects are now rejected with explicit `height > 2` and
+  `maxY < screenH` guards. (2) the fallback path was using the left edge of the
+  focused element as the X anchor, always producing a far-left popup. It now
+  uses the mouse cursor X if it's within the field, falling back to the
+  horizontal centre of the field.
+- **Menu bar icon no longer disappears after showing the popup.** `setupMenuBar()`
+  was being called from three places (launch, event-tap start, `popoverDidClose`)
+  and each call was creating a new `NSStatusItem`, causing the old one to be
+  released and vanish. `NSStatusItem` is now created exactly once; subsequent
+  calls only rebuild the menu content via a new `attachMenu()` helper.
+- **Accessibility permission now persists across rebuilds.** macOS revokes
+  Accessibility grants when the app binary changes if the code signing identity
+  changes between builds. `build.sh` now signs with a stable self-signed
+  `Disco Dev` certificate (created once in Keychain Access) so the TCC database
+  keeps the grant across rebuilds. Falls back to ad-hoc signing with a warning
+  if the cert is not found.
 - **Enter/Tab no longer leaks into the host app.** Previously, confirming a
   selection with Enter would also trigger whatever Enter does in the underlying
   app (submit a form, send a message, add a newline). The event tap now returns
