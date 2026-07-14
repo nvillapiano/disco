@@ -21,14 +21,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME}"
-          gh release create "${VERSION}" \
-            --title "Disco ${VERSION}" \
-            --notes "## Install
+          cat > /tmp/release_notes.md << 'NOTES'
+          ## Install
 
-  1. Download **Disco.dmg** below
-  2. Open the DMG and drag **Disco.app** to /Applications
-  3. Launch Disco — right-click → Open on first run to bypass Gatekeeper
-  4. Grant Accessibility in **System Settings → Privacy & Security → Accessibility**
-  5. Type \`:fire\` in any app to get started 🪩" \
+          1. Download **Disco.dmg** below
+          2. Open the DMG and drag **Disco.app** to /Applications
+          3. Launch Disco — right-click → Open on first run to bypass Gatekeeper
+          4. Grant Accessibility in **System Settings → Privacy & Security → Accessibility**
+          5. Type `:fire` in any app to get started 🪩
+          NOTES
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Disco ${GITHUB_REF_NAME}" \
+            --notes-file /tmp/release_notes.md \
             Disco.dmg
