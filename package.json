@@ -12,7 +12,8 @@
   "scripts": {
     "build": "bash build.sh",
     "migrate": "bash install.sh",
-    "build:full": "npm run build && npm run migrate"
+    "build:full": "npm run build && npm run migrate",
+    "release": "git tag v$(node -p \"require('./package.json').version\") && git push origin v$(node -p \"require('./package.json').version\")"
   },
   "keywords": [
     "macos",
